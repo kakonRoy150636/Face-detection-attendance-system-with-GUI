@@ -1,6 +1,6 @@
 """
 Face Recognition and Verification Pipeline with 3D Depth Liveness Detection.
-Handles model loading, face locations, encodings, distance metrics, liveness checks, and confirmation windows.
+Optimized for high FPS via Frame Skipping and Conditional Liveness.
 """
 
 import os
@@ -18,19 +18,22 @@ except ImportError:
 
 
 class FaceMatcher:
-    """Manages facial encodings, 3D liveness detection, and frame-by-frame identification."""
-
     def __init__(self, known_dir: str):
         self.known_dir = known_dir
         self.known_encodings: List[np.ndarray] = []
         self.known_names: List[str] = []
         self.known_paths: List[str] = []
         self.face_seen_time: Dict[str, float] = {}
-        # 3D Depth Liveness Detector শুরু করা
         self.depth_detector = DepthLivenessDetector(depth_variance_threshold=0.035)
 
+        # FPS অপটিমাইজেশন ভ্যারিয়েবল
+        self.frame_count = 0
+        self.skip_frames = 3  # প্রতি ৩ ফ্রেমে ১ বার রিকগনিশন ও ল্যাবনেস চলবে
+        self.last_confirmed: List[Dict[str, Any]] = []
+        self.last_detected: Set[str] = set()
+        self.last_overlays: List[Dict[str, Any]] = []
+
     def load_known_faces(self, log_callback=None) -> int:
-        """Loads reference face images and computes 128-d encodings."""
         self.known_encodings.clear()
         self.known_names.clear()
         self.known_paths.clear()
@@ -76,25 +79,33 @@ class FaceMatcher:
         confirm_time: float = 1.0,
         current_time: Optional[float] = None
     ) -> Tuple[np.ndarray, List[Dict[str, Any]], Set[str], List[Dict[str, Any]]]:
-        """
-        Detects faces, verifies 3D depth liveness, and validates attendance confirmation.
-        Returns:
-            frame, confirmed_matches, detected_names, overlay_results
-        """
+
         if current_time is None:
             current_time = time.time()
 
         if not HAS_FACE_REC or not self.known_encodings:
             return frame, [], set(), []
 
-        # 1. 3D Depth Liveness যাচাই
-        is_live_global, depth_score = self.depth_detector.check_liveness(frame)
+        # অপটিমাইজেশন ১: স্কিপ ফ্রেম চেক (FPS ড্রপ ঠেকানোর মূল জায়গা)
+        self.frame_count += 1
+        if self.frame_count % self.skip_frames != 0:
+            return frame, self.last_confirmed, self.last_detected, self.last_overlays
 
-        # 2. ফেস রিকগনিশন প্রসেসিং (দ্রুতগতির জন্য 0.25 স্কেল)
+        # দ্রুত লোকেশন ডিটেকশনের জন্য 0.25x ছোট করা
         small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
         face_locs = face_recognition.face_locations(rgb)
+
+        # অপটিমাইজেশন ২: ফ্রেমে মুখ না থাকলে MediaPipe চালানোর কোনো প্রয়োজন নেই
+        if not face_locs:
+            self.last_confirmed = []
+            self.last_detected = set()
+            self.last_overlays = []
+            return frame, [], set(), []
+
+        # ফ্রেমে মুখ পেলেই কেবল 3D Depth চেক হবে
+        is_live_global, depth_score = self.depth_detector.check_liveness(frame)
         face_encs = face_recognition.face_encodings(rgb, face_locs)
 
         detected_names = set()
@@ -109,7 +120,6 @@ class FaceMatcher:
 
             name_show = "Unknown"
             best_dist = 1.0
-            is_confirmed = False
 
             if self.known_encodings:
                 dists = face_recognition.face_distance(self.known_encodings, enc)
@@ -120,16 +130,13 @@ class FaceMatcher:
                     det_name = self.known_names[idx]
                     detected_names.add(det_name)
 
-                    # আসল মুখ (3D) হলেই কেবল কনফার্মেশন টাইমার চলবে
                     if is_live_global:
                         if det_name not in self.face_seen_time:
                             self.face_seen_time[det_name] = current_time
 
                         dur = current_time - self.face_seen_time[det_name]
-
                         if dur >= confirm_time:
                             name_show = det_name
-                            is_confirmed = True
                             confirmed_matches.append({
                                 "name": det_name,
                                 "distance": best_dist,
@@ -140,11 +147,9 @@ class FaceMatcher:
                             remaining = confirm_time - dur
                             name_show = f"Verifying... {remaining:.1f}s"
                     else:
-                        # ফেক হলে টাইমার বাতিল হবে
                         self.face_seen_time.pop(det_name, None)
                         name_show = det_name
 
-            # live_tab.py এর draw_liveness_overlay এর জন্য তথ্য প্রস্তুত করা
             overlay_results.append({
                 "name": name_show,
                 "box": (t, r, b, l),
@@ -152,9 +157,13 @@ class FaceMatcher:
                 "confidence": 1.0 - best_dist if best_dist < 1.0 else 0.0
             })
 
-        # ফ্রেম থেকে হারিয়ে যাওয়া মুখগুলোর ট্র্যাকার ক্লিন করা
         for p in list(self.face_seen_time):
             if p not in detected_names:
                 del self.face_seen_time[p]
+
+        # ক্যাশ আপডেট
+        self.last_confirmed = confirmed_matches
+        self.last_detected = detected_names
+        self.last_overlays = overlay_results
 
         return frame, confirmed_matches, detected_names, overlay_results
