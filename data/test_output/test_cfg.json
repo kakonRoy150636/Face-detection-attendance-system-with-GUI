@@ -1,0 +1,8 @@
+{
+    "camera_url": "http://192.168.0.101:4747/video",
+    "tolerance": 0.45,
+    "detection_model": "hog",
+    "confirm_time": 1.0,
+    "num_jitters": 2,
+    "text_size": 10
+}

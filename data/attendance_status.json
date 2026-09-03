@@ -1,0 +1,32 @@
+{
+    "all_status": {
+        "Bastob": "A",
+        "Kakon Roy": "P",
+        "Murad": "A",
+        "Mustak": "A",
+        "Rasel Rana": "A",
+        "Rupam": "A",
+        "Sohan": "A",
+        "Sojib": "A",
+        "Tanij": "A",
+        "Zony Sarder": "A"
+    },
+    "daily_attendance": {
+        "2026-09-04": {
+            "Kakon Roy": "P"
+        }
+    },
+    "employees": [
+        "Bastob",
+        "Kakon Roy",
+        "Murad",
+        "Mustak",
+        "Rasel Rana",
+        "Rupam",
+        "Sohan",
+        "Sojib",
+        "Tanij",
+        "Zony Sarder"
+    ],
+    "last_updated": "2026-09-04T00:30:21.518308"
+}
