@@ -1,13 +1,14 @@
 """
 Live View Tab.
-Contains the video feed, top stat cards, matched face panel with spinning gear, and activity feed.
+Contains the video feed with real-time 3D liveness overlay, top stat cards,
+matched face panel with spinning gear, and activity feed.
 """
 
 from datetime import datetime
 import os
 import subprocess
 import time
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import cv2
 import numpy as np
 
@@ -269,8 +270,67 @@ class LiveTabView:
             fill=C["subtext"], font=("Segoe UI", self.c._sz + 1)
         )
 
-    def show_stream_frame(self, bgr_frame):
-        rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+    def draw_liveness_overlay(self, frame: np.ndarray, results: List[Dict[str, Any]]) -> np.ndarray:
+        """
+        Draws 3D liveness detection boxes and security alerts on the video frame.
+        """
+        output = frame.copy()
+        for face in results:
+            box = face.get("box")
+            if not box:
+                continue
+
+            top, right, bottom, left = box
+            name = face.get("name", "Unknown")
+            is_live = face.get("is_live", False)
+
+            # Color scheme: Green for verified 3D, Red for 2D screen/photo spoof
+            if is_live:
+                box_color = (50, 205, 50)       # Green (BGR)
+                tag_bg = (40, 160, 40)
+                status_label = f"{name} (3D Verified)"
+            else:
+                box_color = (0, 0, 230)         # Red (BGR)
+                tag_bg = (0, 0, 180)
+                status_label = f"{name} (Spoof Detected)"
+
+            # 1. Draw outer bounding box
+            cv2.rectangle(output, (left, top), (right, bottom), box_color, 2)
+
+            # 2. Bottom filled label bar
+            label_height = 26
+            cv2.rectangle(output, (left, bottom - label_height), (right, bottom), tag_bg, cv2.FILLED)
+            cv2.putText(
+                output, status_label, (left + 6, bottom - 8),
+                cv2.FONT_HERSHEY_DUPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA
+            )
+
+            # 3. Top security warning banner if spoofed
+            if not is_live:
+                warning_text = "[SPOOF ALERT: 2D Screen/Photo]"
+                warn_y = max(22, top - 8)
+                # Subtle background shadow for readability
+                cv2.putText(
+                    output, warning_text, (left + 1, warn_y + 1),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.52, (0, 0, 0), 2, cv2.LINE_AA
+                )
+                cv2.putText(
+                    output, warning_text, (left, warn_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.52, (0, 0, 255), 1, cv2.LINE_AA
+                )
+
+        return output
+
+    def show_stream_frame(self, bgr_frame: np.ndarray, results: Optional[List[Dict[str, Any]]] = None):
+        """
+        Overlays detection bounds and displays the processed BGR frame onto the canvas.
+        """
+        if results:
+            display_frame = self.draw_liveness_overlay(bgr_frame, results)
+        else:
+            display_frame = bgr_frame
+
+        rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
         pil = Image.fromarray(rgb)
         lw = self.stream_canvas.winfo_width()
         lh = self.stream_canvas.winfo_height()

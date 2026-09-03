@@ -1,6 +1,6 @@
 """
-Face Recognition and Verification Pipeline.
-Handles model loading, face locations, encodings, distance metrics, and confirmation windows.
+Face Recognition and Verification Pipeline with 3D Depth Liveness Detection.
+Handles model loading, face locations, encodings, distance metrics, liveness checks, and confirmation windows.
 """
 
 import os
@@ -8,6 +8,7 @@ import time
 from typing import Dict, List, Optional, Set, Tuple, Any
 import cv2
 import numpy as np
+from src.core.depth_liveness import DepthLivenessDetector
 
 try:
     import face_recognition
@@ -17,7 +18,7 @@ except ImportError:
 
 
 class FaceMatcher:
-    """Manages facial encodings and frame-by-frame identification."""
+    """Manages facial encodings, 3D liveness detection, and frame-by-frame identification."""
 
     def __init__(self, known_dir: str):
         self.known_dir = known_dir
@@ -25,6 +26,8 @@ class FaceMatcher:
         self.known_names: List[str] = []
         self.known_paths: List[str] = []
         self.face_seen_time: Dict[str, float] = {}
+        # 3D Depth Liveness Detector শুরু করা
+        self.depth_detector = DepthLivenessDetector(depth_variance_threshold=0.035)
 
     def load_known_faces(self, log_callback=None) -> int:
         """Loads reference face images and computes 128-d encodings."""
@@ -72,18 +75,22 @@ class FaceMatcher:
         tolerance: float = 0.50,
         confirm_time: float = 1.0,
         current_time: Optional[float] = None
-    ) -> Tuple[np.ndarray, List[Dict[str, Any]], Set[str]]:
+    ) -> Tuple[np.ndarray, List[Dict[str, Any]], Set[str], List[Dict[str, Any]]]:
         """
-        Detects and annotates faces on the given frame.
+        Detects faces, verifies 3D depth liveness, and validates attendance confirmation.
         Returns:
-            annotated_frame, list_of_confirmed_matches, set_of_detected_names
+            frame, confirmed_matches, detected_names, overlay_results
         """
         if current_time is None:
             current_time = time.time()
 
         if not HAS_FACE_REC or not self.known_encodings:
-            return frame, [], set()
+            return frame, [], set(), []
 
+        # 1. 3D Depth Liveness যাচাই
+        is_live_global, depth_score = self.depth_detector.check_liveness(frame)
+
+        # 2. ফেস রিকগনিশন প্রসেসিং (দ্রুতগতির জন্য 0.25 স্কেল)
         small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
@@ -92,12 +99,14 @@ class FaceMatcher:
 
         detected_names = set()
         confirmed_matches = []
+        overlay_results = []
 
         for (t, r, b, l), enc in zip(face_locs, face_encs):
             t *= 4
             r *= 4
             b *= 4
             l *= 4
+
             name_show = "Unknown"
             best_dist = 1.0
             is_confirmed = False
@@ -111,50 +120,41 @@ class FaceMatcher:
                     det_name = self.known_names[idx]
                     detected_names.add(det_name)
 
-                    if det_name not in self.face_seen_time:
-                        self.face_seen_time[det_name] = current_time
+                    # আসল মুখ (3D) হলেই কেবল কনফার্মেশন টাইমার চলবে
+                    if is_live_global:
+                        if det_name not in self.face_seen_time:
+                            self.face_seen_time[det_name] = current_time
 
-                    dur = current_time - self.face_seen_time[det_name]
+                        dur = current_time - self.face_seen_time[det_name]
 
-                    if dur >= confirm_time:
-                        name_show = det_name
-                        is_confirmed = True
-                        confirmed_matches.append({
-                            "name": det_name,
-                            "distance": best_dist,
-                            "index": idx,
-                            "path": self.known_paths[idx] if idx < len(self.known_paths) else None
-                        })
+                        if dur >= confirm_time:
+                            name_show = det_name
+                            is_confirmed = True
+                            confirmed_matches.append({
+                                "name": det_name,
+                                "distance": best_dist,
+                                "index": idx,
+                                "path": self.known_paths[idx] if idx < len(self.known_paths) else None
+                            })
+                        else:
+                            remaining = confirm_time - dur
+                            name_show = f"Verifying... {remaining:.1f}s"
                     else:
-                        remaining = confirm_time - dur
-                        name_show = f"Verifying... {remaining:.1f}s"
+                        # ফেক হলে টাইমার বাতিল হবে
+                        self.face_seen_time.pop(det_name, None)
+                        name_show = det_name
 
-            # Colors
-            if name_show == "Unknown":
-                color = (0, 0, 255)
-            elif "Verifying" in name_show:
-                color = (0, 200, 255)
-            else:
-                color = (0, 255, 0)
+            # live_tab.py এর draw_liveness_overlay এর জন্য তথ্য প্রস্তুত করা
+            overlay_results.append({
+                "name": name_show,
+                "box": (t, r, b, l),
+                "is_live": is_live_global,
+                "confidence": 1.0 - best_dist if best_dist < 1.0 else 0.0
+            })
 
-            # Box
-            cv2.rectangle(frame, (l, t), (r, b), color, 2)
-
-            # Label box
-            label_w = len(name_show) * 13 + 10
-            cv2.rectangle(frame, (l, t - 30), (l + label_w, t), color, -1)
-            cv2.putText(frame, name_show, (l + 5, t - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-            # Confidence bar
-            if best_dist < 1.0 and name_show != "Unknown":
-                conf = 1.0 - best_dist
-                bar_w = int(conf * (r - l))
-                cv2.rectangle(frame, (l, b + 4), (l + bar_w, b + 12), color, -1)
-                cv2.rectangle(frame, (l, b + 4), (r, b + 12), color, 1)
-
-        # Remove stale tracker times
+        # ফ্রেম থেকে হারিয়ে যাওয়া মুখগুলোর ট্র্যাকার ক্লিন করা
         for p in list(self.face_seen_time):
             if p not in detected_names:
                 del self.face_seen_time[p]
 
-        return frame, confirmed_matches, detected_names
+        return frame, confirmed_matches, detected_names, overlay_results
