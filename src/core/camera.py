@@ -36,7 +36,20 @@ class CameraWorker:
         else:
             cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
 
+            # Some OpenCV builds cannot open HTTP/MJPEG streams through the
+            # FFmpeg backend even though the default backend can handle them.
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(src)
+
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        if not cap.isOpened():
+            if self.log_callback:
+                self.log_callback(
+                    f"  Camera {self.camera_id} failed to open: {self.camera_url}\n"
+                )
+            return
 
         if self.log_callback:
             self.log_callback(f"  Camera {self.camera_id} opened: {self.camera_url}\n")

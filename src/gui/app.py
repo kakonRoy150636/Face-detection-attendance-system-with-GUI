@@ -281,7 +281,7 @@ class FaceAttendanceApp:
                 self._fps_start = cur_time
                 self.live_tab.c_fps.config(text=f"{self.fps:.1f}")
 
-            annotated, confirmed_matches, results = self.matcher.process_frame(
+            annotated, confirmed_matches, _, results = self.matcher.process_frame(
                 frame, tolerance=tol, confirm_time=conf_time, current_time=cur_time
             )
 
@@ -315,7 +315,7 @@ class FaceAttendanceApp:
             cv2.putText(annotated, f"Faces: {len(self.matcher.known_names)}", (16, h - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (148, 226, 213), 2)
             cv2.putText(annotated, f"Present: {pcount}   Absent: {acount}", (16, h - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (205, 214, 244), 2)
 
-            # Show the frame on the correct camera canvas
+            # Show the frame on the canvas that belongs to this camera
             self.live_tab.show_stream_frame(camera_id, annotated, results)
 
         if int(time.time()) % 2 == 0:

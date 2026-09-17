@@ -58,7 +58,12 @@ def load_config(config_path: str = CONFIG_FILE) -> dict:
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                config = json.load(f)
+            if "camera_urls" not in config and "camera_url" in config:
+                config["camera_urls"] = config["camera_url"]
+            if isinstance(config.get("camera_urls"), str):
+                config["camera_urls"] = [config["camera_urls"]]
+            return {**DEFAULT_CONFIG, **config}
         except Exception:
             pass
     return DEFAULT_CONFIG.copy()

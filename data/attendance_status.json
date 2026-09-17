@@ -8,11 +8,15 @@
         "Rupam": "A",
         "Sohan": "A",
         "Sojib": "A",
-        "Tanij": "A",
+        "Tanij": "P",
         "Zony Sarder": "A"
     },
     "daily_attendance": {
         "2026-09-04": {
+            "Kakon Roy": "P"
+        },
+        "2026-09-18": {
+            "Tanij": "P",
             "Kakon Roy": "P"
         }
     },
@@ -28,5 +32,5 @@
         "Tanij",
         "Zony Sarder"
     ],
-    "last_updated": "2026-09-04T00:30:21.518308"
+    "last_updated": "2026-09-18T01:01:50.925546"
 }

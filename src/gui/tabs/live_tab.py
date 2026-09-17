@@ -5,6 +5,7 @@ matched face panel with spinning gear, and activity feed.
 """
 
 from datetime import datetime
+import math
 import os
 import subprocess
 import time
@@ -87,7 +88,8 @@ class LiveTabView:
         mid.rowconfigure(0, weight=1)
 
         # Left: Stream box
-        stream_box = tk.Canvas(mid, bg=C["base"], highlightthickness=0)
+        self.stream_box = tk.Canvas(mid, bg=C["base"], highlightthickness=0)
+        stream_box = self.stream_box
         stream_box.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         stream_box.bind("<Configure>", lambda e: self._draw_rounded_box(stream_box, r=30))
 
@@ -98,6 +100,10 @@ class LiveTabView:
         self.stream_status_lbl = tk.Label(stream_header, text="  ⏸ Idle  ", bg=C["surface0"], fg=C["subtext"],
                                           font=("Segoe UI", sz - 1))
         self.stream_status_lbl.pack(side="right", padx=6)
+
+        # Container that holds the camera grid (built when system starts)
+        self.stream_area = None
+        self.camera_canvases: List[tk.Label] = []
 
         self.stream_canvas = tk.Label(
             stream_box, bg=C["crust"],
@@ -321,9 +327,61 @@ class LiveTabView:
 
         return output
 
-    def show_stream_frame(self, bgr_frame: np.ndarray, results: Optional[List[Dict[str, Any]]] = None):
+    def setup_camera_grids(self, num_cameras: int):
         """
-        Overlays detection bounds and displays the processed BGR frame onto the canvas.
+        Build a grid of stream panels — one per camera source.
+        Layout: 2 cameras are stacked vertically (1 column); 3-4 cameras use
+        a 2-column grid; more use a 3-column grid.
+        """
+        # Tear down any existing grid / placeholder
+        if self.stream_canvas is not None:
+            try:
+                self.stream_canvas.destroy()
+            except Exception:
+                pass
+            self.stream_canvas = None
+        if self.stream_area is not None:
+            try:
+                self.stream_area.destroy()
+            except Exception:
+                pass
+            self.stream_area = None
+
+        self.stream_area = tk.Frame(self.stream_box, bg=C["base"])
+        self.stream_area.pack(fill="both", expand=True)
+
+        cols = 1 if num_cameras <= 2 else (2 if num_cameras <= 4 else 3)
+        rows = math.ceil(num_cameras / cols)
+        for r in range(rows):
+            self.stream_area.rowconfigure(r, weight=1)
+        for c in range(cols):
+            self.stream_area.columnconfigure(c, weight=1)
+
+        self.camera_canvases = []
+        for i in range(num_cameras):
+            col, row = i % cols, i // cols
+
+            cell = tk.Frame(self.stream_area, bg=C["crust"],
+                            highlightbackground=C["surface1"], highlightthickness=1)
+            cell.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
+            cell.columnconfigure(0, weight=1)
+            cell.rowconfigure(1, weight=1)
+
+            hdr = tk.Frame(cell, bg=C["crust"])
+            hdr.grid(row=0, column=0, sticky="ew")
+            tk.Label(hdr, text=f"  ● CAM {i + 1}", bg=C["crust"], fg=C["sky"],
+                     font=("Segoe UI", self.c._sz, "bold"), anchor="w").pack(side="left", padx=6, pady=2)
+
+            cam_label = tk.Label(cell, bg=C["crust"],
+                                 text="\n\n  waiting...\n",
+                                 fg=C["subtext"], justify="center")
+            cam_label.grid(row=1, column=0, sticky="nsew")
+            self.camera_canvases.append(cam_label)
+
+    def show_stream_frame(self, camera_id: int, bgr_frame: np.ndarray, results: Optional[List[Dict[str, Any]]] = None):
+        """
+        Overlays detection bounds and displays the processed BGR frame onto the
+        canvas that corresponds to the given camera_id.
         """
         if results:
             display_frame = self.draw_liveness_overlay(bgr_frame, results)
@@ -332,13 +390,18 @@ class LiveTabView:
 
         rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
         pil = Image.fromarray(rgb)
-        lw = self.stream_canvas.winfo_width()
-        lh = self.stream_canvas.winfo_height()
+
+        if not self.camera_canvases or camera_id >= len(self.camera_canvases):
+            return
+        canvas = self.camera_canvases[camera_id]
+
+        lw = canvas.winfo_width()
+        lh = canvas.winfo_height()
         if lw > 10 and lh > 10:
             pil.thumbnail((lw, lh), Image.LANCZOS)
         photo = ImageTk.PhotoImage(pil)
-        self.stream_canvas.config(image=photo, text="")
-        self.stream_canvas._photo = photo
+        canvas.config(image=photo, text="")
+        canvas._photo = photo
 
     def update_match_panel(self, name: str, dist: float, img_path: Optional[str] = None):
         if img_path and os.path.exists(img_path):
@@ -388,15 +451,21 @@ class LiveTabView:
         self.c_date.config(text=datetime.now().strftime("%Y-%m-%d"))
 
     def reset_stream_display(self):
-        self.stream_canvas.config(
-            image='',
+        # Tear down the camera grid and restore the "press start" placeholder
+        if self.stream_area is not None:
+            try:
+                self.stream_area.destroy()
+            except Exception:
+                pass
+            self.stream_area = None
+        self.camera_canvases = []
+
+        self.stream_canvas = tk.Label(
+            self.stream_box, bg=C["crust"],
             text="\n\n\n  Press  ▶ Start System  to begin\n",
-            fg=C["subtext"],
-            font=("Segoe UI", self.c._sz + 4),
-            justify="center"
+            fg=C["subtext"], font=("Segoe UI", self.c._sz + 4), justify="center"
         )
-        if hasattr(self.stream_canvas, '_photo'):
-            delattr(self.stream_canvas, '_photo')
+        self.stream_canvas.pack(fill="both", expand=True)
 
         self.set_match_spinner_active(False)
         if self._match_hold_job is not None:
