@@ -20,7 +20,7 @@ EXCEL_FILE = str(DATA_DIR / "attendance_today.xlsx")
 
 # Default Parameters
 DEFAULT_CONFIG = {
-    "camera_url": "http://192.168.0.101:4747/video",
+    "camera_urls": ["0"],
     "tolerance": 0.50,
     "detection_model": "hog",
     "confirm_time": 1.0,

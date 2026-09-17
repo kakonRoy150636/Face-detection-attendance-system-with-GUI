@@ -8,7 +8,7 @@ import os
 import queue
 import threading
 import time
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import cv2
 
 try:
@@ -50,12 +50,12 @@ class FaceAttendanceApp:
         self.config = load_config()
         self.running = False
         self.stop_event = threading.Event()
-        self.frame_queue = queue.Queue(maxsize=2)
+        self.frame_queue = queue.Queue(maxsize=20) # Increased queue size for multiple cameras
 
         # Core Engines
         self.matcher = FaceMatcher(known_dir=KNOWN_FOLDER)
         self.attendance_mgr = AttendanceRecordManager()
-        self.camera_worker: Optional[CameraWorker] = None
+        self.camera_workers: List[CameraWorker] = []
 
         self.fps = 0.0
         self._frame_count = 0
@@ -221,10 +221,17 @@ class FaceAttendanceApp:
         self.live_tab.set_match_spinner_active(True)
         self.log("\n=== System started ===\n")
 
-        cam_url = self.config.get("camera_url", DEFAULT_CONFIG["camera_url"])
-        self.camera_worker = CameraWorker(cam_url, self.frame_queue, self.stop_event, log_callback=self.log)
-        self.camera_worker.start()
+        camera_urls = self.config.get("camera_urls", DEFAULT_CONFIG["camera_urls"])
+        if isinstance(camera_urls, str):
+            camera_urls = [camera_urls]
 
+        self.camera_workers = []
+        for idx, url in enumerate(camera_urls):
+            worker = CameraWorker(idx, url, self.frame_queue, self.stop_event, log_callback=self.log)
+            worker.start()
+            self.camera_workers.append(worker)
+
+        self.live_tab.setup_camera_grids(len(camera_urls))
         self._process_loop()
 
     def stop_system(self):
@@ -233,6 +240,13 @@ class FaceAttendanceApp:
         self.log("\n=== Stopping... ===\n")
         self.stop_event.set()
         self.running = False
+
+        # Wait for workers to stop
+        for worker in self.camera_workers:
+            if worker.thread:
+                worker.thread.join(timeout=1.0)
+        
+        self.camera_workers = []
 
         self.live_tab.start_btn.config(state="normal")
         self.live_tab.stop_btn.config(state="disabled")
@@ -250,8 +264,13 @@ class FaceAttendanceApp:
         tol = float(self.config.get("tolerance", DEFAULT_CONFIG["tolerance"]))
         conf_time = float(self.config.get("confirm_time", DEFAULT_CONFIG["confirm_time"]))
 
-        if not self.frame_queue.empty():
-            frame = self.frame_queue.get()
+        # Process all available frames in the queue
+        while not self.frame_queue.empty():
+            try:
+                camera_id, frame = self.frame_queue.get_nowait()
+            except queue.Empty:
+                break
+            
             cur_time = time.time()
             self._frame_count += 1
 
@@ -262,7 +281,7 @@ class FaceAttendanceApp:
                 self._fps_start = cur_time
                 self.live_tab.c_fps.config(text=f"{self.fps:.1f}")
 
-            annotated, confirmed_matches, _ = self.matcher.process_frame(
+            annotated, confirmed_matches, results = self.matcher.process_frame(
                 frame, tolerance=tol, confirm_time=conf_time, current_time=cur_time
             )
 
@@ -296,7 +315,8 @@ class FaceAttendanceApp:
             cv2.putText(annotated, f"Faces: {len(self.matcher.known_names)}", (16, h - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (148, 226, 213), 2)
             cv2.putText(annotated, f"Present: {pcount}   Absent: {acount}", (16, h - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (205, 214, 244), 2)
 
-            self.live_tab.show_stream_frame(annotated)
+            # Show the frame on the correct camera canvas
+            self.live_tab.show_stream_frame(camera_id, annotated, results)
 
         if int(time.time()) % 2 == 0:
             self._refresh_cards()

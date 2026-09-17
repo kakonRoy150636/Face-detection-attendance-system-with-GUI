@@ -13,7 +13,8 @@ import cv2
 class CameraWorker:
     """Background worker that continuously pulls video frames from device or RTSP/HTTP URL."""
 
-    def __init__(self, camera_url: Union[str, int], frame_queue: queue.Queue, stop_event: threading.Event, log_callback=None):
+    def __init__(self, camera_id: int, camera_url: Union[str, int], frame_queue: queue.Queue, stop_event: threading.Event, log_callback=None):
+        self.camera_id = camera_id
         self.camera_url = camera_url
         self.frame_queue = frame_queue
         self.stop_event = stop_event
@@ -21,7 +22,7 @@ class CameraWorker:
         self.thread: Optional[threading.Thread] = None
 
     def start(self):
-        self.thread = threading.Thread(target=self._run, daemon=True, name="CameraWorkerThread")
+        self.thread = threading.Thread(target=self._run, daemon=True, name=f"CameraWorkerThread_{self.camera_id}")
         self.thread.start()
 
     def _run(self):
@@ -38,19 +39,25 @@ class CameraWorker:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if self.log_callback:
-            self.log_callback(f"  Camera opened: {self.camera_url}\n")
+            self.log_callback(f"  Camera {self.camera_id} opened: {self.camera_url}\n")
 
         while not self.stop_event.is_set():
             ret, frame = cap.read()
             if ret and frame is not None:
+                # Ensure we always have the latest frame in the queue
+                if self.frame_queue.full():
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                
                 try:
-                    self.frame_queue.get_nowait()
-                except queue.Empty:
+                    self.frame_queue.put_nowait((self.camera_id, frame))
+                except queue.Full:
                     pass
-                self.frame_queue.put(frame)
             else:
                 time.sleep(0.04)
 
         cap.release()
         if self.log_callback:
-            self.log_callback("  Camera released.\n")
+            self.log_callback(f"  Camera {self.camera_id} released.\n")
