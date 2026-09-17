@@ -221,9 +221,17 @@ class FaceAttendanceApp:
         self.live_tab.set_match_spinner_active(True)
         self.log("\n=== System started ===\n")
 
+        self.config = load_config()
         camera_urls = self.config.get("camera_urls", DEFAULT_CONFIG["camera_urls"])
         if isinstance(camera_urls, str):
             camera_urls = [camera_urls]
+        camera_urls = [str(url).strip() for url in camera_urls if str(url).strip()]
+        if not camera_urls:
+            self.running = False
+            messagebox.showerror("Camera URL", "No camera source is configured.")
+            return
+
+        self.log(f"  Starting camera sources: {', '.join(camera_urls)}\n")
 
         self.camera_workers = []
         for idx, url in enumerate(camera_urls):
@@ -264,13 +272,17 @@ class FaceAttendanceApp:
         tol = float(self.config.get("tolerance", DEFAULT_CONFIG["tolerance"]))
         conf_time = float(self.config.get("confirm_time", DEFAULT_CONFIG["confirm_time"]))
 
-        # Process all available frames in the queue
-        while not self.frame_queue.empty():
+        # Discard stale frames and keep only the newest frame from each camera.
+        # This prevents network-camera latency from growing while recognition runs.
+        latest_frames = {}
+        while True:
             try:
                 camera_id, frame = self.frame_queue.get_nowait()
             except queue.Empty:
                 break
-            
+            latest_frames[camera_id] = frame
+
+        for camera_id, frame in latest_frames.items():
             cur_time = time.time()
             self._frame_count += 1
 

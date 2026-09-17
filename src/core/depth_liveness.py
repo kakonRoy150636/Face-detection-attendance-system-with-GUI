@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import mediapipe as mp
+from typing import Optional, Tuple
 
 class DepthLivenessDetector:
     def __init__(self, depth_variance_threshold=0.035):
@@ -18,12 +19,30 @@ class DepthLivenessDetector:
         self.RIGHT_CHEEK = 454
         self.CHIN = 152
 
-    def check_liveness(self, bgr_frame):
+    def check_liveness(self, bgr_frame, face_location: Optional[Tuple[int, int, int, int]] = None):
         """
-        অপটিমাইজড: ফ্রেম 0.5x স্কেল ডাউন করে প্রসেস করা হচ্ছে
+        Checks if a face is live using 3D depth analysis.
+        If face_location is provided, it crops the frame to the face first.
         """
+        if face_location:
+            t, r, b, l = face_location
+            h, w = bgr_frame.shape[:2]
+            # Add 20% padding to ensure the whole face is captured for MediaPipe
+            pad_h = int(h * 0.2)
+            pad_w = int(w * 0.2)
+            t = max(0, t - pad_h)
+            b = min(h, b + pad_h)
+            l = max(0, l - pad_w)
+            r = min(w, r + pad_w)
+            working_frame = bgr_frame[t:b, l:r]
+        else:
+            working_frame = bgr_frame
+
+        if working_frame.size == 0:
+            return False, 0.0
+
         # ১. রেজোলিউশন কমিয়ে প্রসেসিং স্পিড বাড়ানো
-        small_frame = cv2.resize(bgr_frame, (0, 0), fx=0.5, fy=0.5)
+        small_frame = cv2.resize(working_frame, (0, 0), fx=0.5, fy=0.5)
         rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
         results = self.face_mesh.process(rgb_frame)

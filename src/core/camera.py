@@ -54,9 +54,11 @@ class CameraWorker:
         if self.log_callback:
             self.log_callback(f"  Camera {self.camera_id} opened: {self.camera_url}\n")
 
+        read_failures = 0
         while not self.stop_event.is_set():
             ret, frame = cap.read()
             if ret and frame is not None:
+                read_failures = 0
                 # Ensure we always have the latest frame in the queue
                 if self.frame_queue.full():
                     try:
@@ -69,6 +71,11 @@ class CameraWorker:
                 except queue.Full:
                     pass
             else:
+                read_failures += 1
+                if read_failures == 1 and self.log_callback:
+                    self.log_callback(
+                        f"  Camera {self.camera_id} opened but returned no frames: {self.camera_url}\n"
+                    )
                 time.sleep(0.04)
 
         cap.release()

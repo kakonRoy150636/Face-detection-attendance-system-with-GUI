@@ -52,19 +52,33 @@ class SettingsTabView:
         val = self._cam_entry.get().strip()
         if not val:
             return
-        existing = set(self._cam_listbox.get(0, tk.END))
-        if val not in existing:
-            self._cam_listbox.insert(tk.END, val)
+
+        # Convert to string for comparison
+        val_str = str(val)
+
+        existing = []
+        for i in range(self._cam_listbox.size()):
+            existing.append(self._cam_listbox.get(i))
+
+        if val_str in existing:
+            messagebox.showwarning("Duplicate", f"Camera source '{val_str}' is already in the list.")
+            self._cam_entry.delete(0, tk.END)
+            return
+
+        self._cam_listbox.insert(tk.END, val_str)
         self._cam_entry.delete(0, tk.END)
 
     def _remove_camera_url(self):
-        sel = self._cam_listbox.curselection()
-        if not sel:
-            return
-        self._cam_listbox.delete(sel[0])
+        try:
+            sel = self._cam_listbox.curselection()
+            if not sel:
+                return
+            self._cam_listbox.delete(sel[0])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to remove: {e}")
 
     def _bind_cam_entry(self, event):
-        if event.keysym == "Return":
+        if event.keysym in ("Return", "KP_Enter"):
             self._add_camera_url()
             return "break"
 
@@ -108,7 +122,7 @@ class SettingsTabView:
             highlightcolor=C["blue"]
         )
         self._cam_entry.pack(side="left", fill="x", expand=True, ipady=5)
-        self._cam_entry.bind("<KeyRelease>", self._bind_cam_entry)
+        self._cam_entry.bind("<Return>", self._bind_cam_entry)
 
         add_btn = RoundedButton(cam_actions, "+ Add", self._add_camera_url, C["green"], "#000000", C["teal"], width=64, height=30, radius=15)
         add_btn.pack(side="left", padx=(6, 0))
@@ -169,7 +183,10 @@ class SettingsTabView:
         try:
             urls = list(self._cam_listbox.get(0, tk.END))
             urls = [u.strip() for u in urls if u.strip()]
-            self.c.config["camera_urls"] = urls if urls else ["0"]
+            if not urls:
+                messagebox.showerror("Camera URL", "Add at least one camera source before saving.")
+                return
+            self.c.config["camera_urls"] = urls
             for k, (var, typ) in self._setting_vars.items():
                 self.c.config[k] = typ(var.get())
             save_config(self.c.config)

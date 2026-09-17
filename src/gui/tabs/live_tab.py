@@ -69,9 +69,12 @@ class LiveTabView:
     def _build_ui(self):
         sz = self.c._sz
 
+        self.tab.columnconfigure(0, weight=1)
+        self.tab.rowconfigure(1, weight=1)
+
         # Top metric cards
         cards_row = ttk.Frame(self.tab)
-        cards_row.pack(fill="x", padx=12, pady=(10, 6))
+        cards_row.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 6))
         cards_row.columnconfigure((0, 1, 2, 3, 4), weight=1)
 
         self.c_faces = self._card(cards_row, "Known Faces", "0", 0, C["blue"])
@@ -82,7 +85,7 @@ class LiveTabView:
 
         # Middle container
         mid = ttk.Frame(self.tab)
-        mid.pack(fill="both", expand=True, padx=12, pady=4)
+        mid.grid(row=1, column=0, sticky="nsew", padx=12, pady=4)
         mid.columnconfigure(0, weight=5)
         mid.columnconfigure(1, weight=2)
         mid.rowconfigure(0, weight=1)
@@ -154,7 +157,7 @@ class LiveTabView:
 
         # Bottom Buttons
         btn_bar = tk.Frame(self.tab, bg=C["base"])
-        btn_bar.pack(fill="x", padx=12, pady=(4, 10))
+        btn_bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 10))
 
         self.start_btn = RoundedButton(btn_bar, "▶ Start System", self.c.start_system, C["blue"], "#000000", C["sky"], width=150, height=40, radius=20)
         self.start_btn.pack(side="left", padx=4)

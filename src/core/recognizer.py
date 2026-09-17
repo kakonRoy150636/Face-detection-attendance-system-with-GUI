@@ -28,7 +28,12 @@ class FaceMatcher:
 
         # FPS অপটিমাইজেশন ভ্যারিয়েবল
         self.frame_count = 0
-        self.skip_frames = 3  # প্রতি ৩ ফ্রেমে ১ বার রিকগনিশন ও ল্যাবনেস চলবে
+        # Face recognition is CPU-heavy; keep displaying frames while running
+        # recognition less frequently for a smoother live preview.
+        self.skip_frames = 8
+        self.liveness_interval = 3
+        self.liveness_count = 0
+        self.last_liveness = False
         self.last_confirmed: List[Dict[str, Any]] = []
         self.last_detected: Set[str] = set()
         self.last_overlays: List[Dict[str, Any]] = []
@@ -104,19 +109,25 @@ class FaceMatcher:
             self.last_overlays = []
             return frame, [], set(), []
 
-        # ফ্রেমে মুখ পেলেই কেবল 3D Depth চেক হবে
-        is_live_global, depth_score = self.depth_detector.check_liveness(frame)
         face_encs = face_recognition.face_encodings(rgb, face_locs)
-
-        detected_names = set()
-        confirmed_matches = []
-        overlay_results = []
+        detected_names: Set[str] = set()
+        confirmed_matches: List[Dict[str, Any]] = []
+        overlay_results: List[Dict[str, Any]] = []
+        self.liveness_count += 1
+        run_liveness = self.liveness_count % self.liveness_interval == 0
 
         for (t, r, b, l), enc in zip(face_locs, face_encs):
             t *= 4
             r *= 4
             b *= 4
             l *= 4
+
+            # MediaPipe is expensive; reuse the latest liveness result between checks.
+            if run_liveness:
+                self.last_liveness, _ = self.depth_detector.check_liveness(
+                    frame, face_location=(t, r, b, l)
+                )
+            is_live_face = self.last_liveness
 
             name_show = "Unknown"
             best_dist = 1.0
@@ -130,7 +141,7 @@ class FaceMatcher:
                     det_name = self.known_names[idx]
                     detected_names.add(det_name)
 
-                    if is_live_global:
+                    if is_live_face:
                         if det_name not in self.face_seen_time:
                             self.face_seen_time[det_name] = current_time
 
@@ -153,7 +164,7 @@ class FaceMatcher:
             overlay_results.append({
                 "name": name_show,
                 "box": (t, r, b, l),
-                "is_live": is_live_global,
+                "is_live": is_live_face,
                 "confidence": 1.0 - best_dist if best_dist < 1.0 else 0.0
             })
 
